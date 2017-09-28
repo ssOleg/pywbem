@@ -69,6 +69,7 @@ from __future__ import print_function, absolute_import
 
 from datetime import datetime, timedelta
 import warnings
+from copy import copy
 
 import six
 
@@ -804,6 +805,150 @@ def moftype(cim_type, refclass):
     return (refclass + ' REF') if cim_type == 'reference' else cim_type
 
 
+def _cim_keybinding(key, value):
+    """
+    Return a keybinding value, from dict item input (key+value), after
+    performing some checks.
+
+    If the input value is a CIMProperty object, a copy of its value is
+    returned.
+
+    Otherwise, a new CIMProperty object is created from the input value, and
+    returned.
+    """
+
+    if key is None:
+        raise ValueError("Keybinding name in instance path must not be "
+                         "None")
+
+    if isinstance(value, CIMProperty):
+        if value.name.lower() != key.lower():
+            raise ValueError("CIMProperty.name must be dictionary key %s, but "
+                             "is %s" % (key, value.name))
+        kbval = copy(value.value)
+    else:
+
+        # Ideally, we won't accept keybinding values specified as Python int or
+        # float values, but require a CIM data type (e.g. Uint32 or Real32).
+        # However, that was allowed in earlier versions of pywbem, so for
+        # compatibility, we deprecate that but do not raise an exception.
+
+        # Note: The CIM data types are derived from the built-in types, so we
+        # cannot use isinstance() for this test.
+
+        # pylint: disable=unidiomatic-typecheck
+        if builtin_type(value) in six.integer_types + (float,):
+            warnings.warn(
+                "Using Python numeric type %s for the value of keybinding "
+                "%s is deprecated; use CIM data type classes instead" %
+                (builtin_type(value), key),
+                DeprecationWarning)
+
+        kbval = value
+
+    return kbval
+
+
+def _cim_property_value(key, value):
+    """
+    Return a CIMProperty object for representing a property value, from dict
+    item input (key+value), after performing some checks.
+
+    If the input value is a CIMProperty object, it is returned.
+
+    Otherwise, a new CIMProperty object is created from the input value, and
+    returned.
+    """
+
+    if key is None:
+        raise ValueError("Property name must not be None")
+
+    if isinstance(value, CIMProperty):
+        if value.name.lower() != key.lower():
+            raise ValueError("CIMProperty.name must be dictionary key "
+                             "%s, but is %s" % (key, value.name))
+        prop = value
+    else:
+        # We no longer check for the common error to set CIM numeric values as
+        # Python int or float, because that is done in the CIMProperty
+        # constructor.
+        prop = CIMProperty(key, value)
+
+    return prop
+
+
+def _cim_property_decl(key, value):
+    """
+    Return a CIMProperty object for representing a property declaration, from
+    dict item input (key+value), after performing some checks.
+
+    The input value must be a CIMProperty object, which is returned.
+    """
+
+    if key is None:
+        raise ValueError("Property name must not be None")
+
+    if not isinstance(value, CIMProperty):
+        raise TypeError("Property must be a CIMProperty object, but is: %s" %
+                        type(value))
+
+    if value.name.lower() != key.lower():
+        raise ValueError("CIMProperty.name must be dictionary key %s, but is "
+                         "%s" % (key, value.name))
+
+    return value
+
+
+def _cim_method(key, value):
+    """
+    Return a CIMMethod object, from dict item input (key+value), after
+    performing some checks.
+
+    The input value must be a CIMMethod object, which is returned.
+    """
+
+    if key is None:
+        raise ValueError("Method name must not be None")
+
+    if not isinstance(value, CIMMethod):
+        raise TypeError("Method must be a CIMMethod object, but is: %s" %
+                        type(value))
+
+    if value.name.lower() != key.lower():
+        raise ValueError("CIMMethod.name must be dictionary key %s, but is "
+                         "%s" % (key, value.name))
+
+    return value
+
+
+def _cim_qualifier(key, value):
+    """
+    Return a CIMQualifier object, from dict item input (key+value), after
+    performing some checks.
+
+    If the input value is a CIMQualifier object, it is returned.
+
+    Otherwise, a new CIMQualifier object is created from the input value, and
+    returned.
+    """
+
+    if key is None:
+        raise ValueError("Qualifier name must not be None")
+
+    if isinstance(value, CIMQualifier):
+        if value.name.lower() != key.lower():
+            raise ValueError("CIMQualifier.name must be dictionary key "
+                             "%s, but is %s" % (key, value.name))
+        qual = value
+    else:
+        # We no longer check for the common error to set CIM numeric values as
+        # Python int or float, because that is done in the CIMQualifier
+        # constructor.
+        qual = CIMQualifier(key, value)
+
+    return qual
+
+
 class CIMInstanceName(_CIMComparisonMixin):
     """
     A CIM instance path (aka *CIM instance name*).
@@ -832,10 +977,20 @@ class CIMInstanceName(_CIMComparisonMixin):
 
             * key (:term:`string`):
               Keybinding name. Lexical case is preserved. Must not be `None`.
-            * value (:term:`CIM data type`):
+
+            * value (:term:`CIM data type` or :class:`~pywbem.CIMProperty`):
               Keybinding value.
+
+              If specified as a :term:`CIM data type`, the provided object will
+              be stored in the ``CIMInstanceName`` object.
               Note that numeric Python types (``int``, ``float``) are not valid
-              CIM data types.
+              CIM data types; their use has been deprecated in pywbem v0.12.0
+              and will cause a :term:`DeprecationWarning` to be issued.
+
+              If specified as a :class:`~pywbem.CIMProperty` object, its `name`
+              attribute must be equal (case insensitively) to the dictionary
+              key, and a copy of its value (a :term:`CIM data type`) will be
+              stored in the ``CIMInstanceName`` object.
 
             `None` is interpreted as an empty set of keybindings.
 
@@ -866,20 +1021,17 @@ class CIMInstanceName(_CIMComparisonMixin):
             `None` means that the namespace is unspecified, and the
             same-named attribute in the ``CIMInstanceName`` object will also be
             `None`.
+
+        Raises:
+
+          ValueError: classname is `None`, or a keybinding name is `None`, or
+            a keybinding name does not match its dictionary key.
         """
-
-        # Make sure we process Unicode strings
-        classname = _ensure_unicode(classname)
-        host = _ensure_unicode(host)
-        namespace = _ensure_unicode(namespace)
-
-        if classname is None:
-            raise ValueError('Instance path must have a class name')
-
+        # We use the respective setter methods:
         self.classname = classname
-        self.keybindings = NocaseDict(keybindings)
-        self.host = host
+        self.keybindings = keybindings
         self.namespace = namespace
+        self.host = host
 
     @property
     def classname(self):
@@ -890,15 +1042,16 @@ class CIMInstanceName(_CIMComparisonMixin):
         Will not be `None`.
 
         This attribute is settable. For details, see the description of the
-        same-named constructor parameter,
-        except that the provided value must be a :term:`unicode string`.
+        same-named constructor parameter.
         """
         return self._classname
 
     @classname.setter
     def classname(self, classname):
         """Setter method; for a description see the getter method."""
-        self._classname = classname
+        if classname is None:
+            raise ValueError("Class name in instance path must not be None")
+        self._classname = _ensure_unicode(classname)
 
     @property
     def keybindings(self):
@@ -915,13 +1068,12 @@ class CIMInstanceName(_CIMComparisonMixin):
         Will not be `None`.
 
         This attribute is settable; setting it will cause the current
-        keybindings to be replaced with the new keybindings.
-        The provided value must be a `NocaseDict`_ object. For details, see the
-        description of the same-named constructor parameter,
-        except that the dictionary key must be a :term:`unicode string`.
+        keybindings to be replaced with the new keybindings. For details, see
+        the description of the same-named constructor parameter.
 
         The keybindings can also be accessed and manipulated one by one
-        because the attribute value is a modifiable dictionary::
+        because the attribute value is a modifiable dictionary. The provided
+        input value must be specified as a :term:`CIM data type`::
 
             instpath = CIMInstanceName(...)
             v1 = "abc"  # must be a CIM data type
@@ -931,7 +1083,9 @@ class CIMInstanceName(_CIMComparisonMixin):
             del instpath.keybindings['k1']  # Delete "k1" from the inst. path
 
         In addition, the keybindings can be accessed and manipulated one by
-        one by using the entire ``CIMInstanceName`` object like a dictionary::
+        one by using the entire ``CIMInstanceName`` object like a dictionary.
+        Again, the provided input value must be specified as a
+        :term:`CIM data type`::
 
             instpath = CIMInstanceName(...)
             v2 = Uint32(...)  # must be a CIM data type
@@ -945,7 +1099,12 @@ class CIMInstanceName(_CIMComparisonMixin):
     @keybindings.setter
     def keybindings(self, keybindings):
         """Setter method; for a description see the getter method."""
-        self._keybindings = keybindings
+        # We make sure that the dictionary is a NocaseDict object, and that the
+        # property values are CIMProperty objects:
+        self._keybindings = NocaseDict()
+        if keybindings:
+            for key, value in keybindings.items():
+                self._keybindings[key] = _cim_keybinding(key, value)
 
     @property
     def namespace(self):
@@ -956,15 +1115,14 @@ class CIMInstanceName(_CIMComparisonMixin):
         `None` means that the namespace is unspecified.
 
         This attribute is settable. For details, see the description of the
-        same-named constructor parameter,
-        except that the provided value must be a :term:`unicode string`.
+        same-named constructor parameter.
         """
         return self._namespace
 
     @namespace.setter
     def namespace(self, namespace):
         """Setter method; for a description see the getter method."""
-        self._namespace = namespace
+        self._namespace = _ensure_unicode(namespace)
 
     @property
     def host(self):
@@ -978,15 +1136,14 @@ class CIMInstanceName(_CIMComparisonMixin):
         `None` means that the host and port are unspecified.
 
         This attribute is settable. For details, see the description of the
-        same-named constructor parameter,
-        except that the provided value must be a :term:`unicode string`.
+        same-named constructor parameter.
         """
         return self._host
 
     @host.setter
     def host(self, host):
         """Setter method; for a description see the getter method."""
-        self._host = host
+        self._host = _ensure_unicode(host)
 
     def _cmp(self, other):
         """
@@ -1323,9 +1480,11 @@ class CIMInstance(_CIMComparisonMixin):
               Property name. Lexical case is preserved. Must not be `None`.
             * value (:term:`CIM data type` or :class:`~pywbem.CIMProperty`):
               Property value.
+
               If specified as a :term:`CIM data type`, a new
               :class:`~pywbem.CIMProperty` object will be created from it,
               and the new object will be stored in the ``CIMInstance`` object.
+
               If specified as a :class:`~pywbem.CIMProperty` object, its `name`
               attribute must be equal (case insensitively) to the dictionary
               key, and the provided object will be stored in the
@@ -1343,11 +1502,17 @@ class CIMInstance(_CIMComparisonMixin):
 
             * key (:term:`string`):
               Qualifier name. Lexical case is preserved. Must not be `None`.
-            * value (:class:`~pywbem.CIMQualifier`):
+            * value (:term:`CIM data type` or :class:`~pywbem.CIMQualifier`):
               Qualifier value.
-              The `name` attribute of the provided object must be equal (case
-              insensitively) to the dictionary key, and the provided object
-              will be stored in the ``CIMInstance`` object (no copy is made).
+
+              If specified as a :term:`CIM data type`, a new
+              :class:`~pywbem.CIMQualifier` object will be created from it,
+              and the new object will be stored in the ``CIMInstance`` object.
+
+              If specified as a :class:`~pywbem.CIMQualifier` object, its `name`
+              attribute must be equal (case insensitively) to the dictionary
+              key, and the provided object will be stored in the
+              ``CIMInstance`` object (no copy is made).
 
             `None` is interpreted as an empty set of qualifiers.
 
@@ -1375,25 +1540,21 @@ class CIMInstance(_CIMComparisonMixin):
             `None` means that the properties are not filtered, and the
             same-named attribute in the ``CIMInstance`` object will also be
             `None`.
+
+        Raises:
+
+          ValueError: classname is `None`, a property or qualifier name is
+            `None`, or a property or qualifier name does not match its
+            dictionary key.
+          TypeError: a numeric Python type was used for a property or qualifier
+            value.
         """
-
-        self.classname = _ensure_unicode(classname)
-        self.qualifiers = NocaseDict(qualifiers)
-        # TODO: Add support for accepting qualifiers as plain dict
+        # We use the respective setter methods:
+        self.classname = classname
         self.path = path
-        if property_list is not None:
-            self.property_list = [_ensure_unicode(x).lower()
-                                  for x in property_list]
-        else:
-            self.property_list = None
-
-        # Assign initialised property values and run through
-        # __setitem__ to enforce CIM data types for each property.
-
-        self.properties = NocaseDict()
-        if properties:
-            for key, value in properties.items():
-                self.__setitem__(key, value)
+        self.property_list = property_list
+        self.properties = properties  # Depends on path & property_list set
+        self.qualifiers = qualifiers
 
     @property
     def classname(self):
@@ -1403,15 +1564,16 @@ class CIMInstance(_CIMComparisonMixin):
         Will not be `None`.
 
         This attribute is settable. For details, see the description of the
-        same-named constructor parameter,
-        except that the provided value must be a :term:`unicode string`.
+        same-named constructor parameter.
         """
         return self._classname
 
     @classname.setter
     def classname(self, classname):
         """Setter method; for a description see the getter method."""
-        self._classname = classname
+        if classname is None:
+            raise ValueError("Class name in instance must not be None")
+        self._classname = _ensure_unicode(classname)
 
     @property
     def properties(self):
@@ -1439,7 +1601,7 @@ class CIMInstance(_CIMComparisonMixin):
         object::
 
             inst = CIMInstance(...)
-            p1 = CIMProperty('p1', ...)
+            p1 = CIMProperty('p1', ...)  # must be CIMProperty
 
             inst.properties['p1'] = p1  # Set "p1" to p1 (add if needed)
             p1 = inst.properties['p1']  # Access "p1"
@@ -1447,11 +1609,11 @@ class CIMInstance(_CIMComparisonMixin):
 
         In addition, the CIM properties can be accessed and manipulated one by
         one by using the entire :class:`~pywbem.CIMInstance` object like a
-        dictionary. Again, the provided input value must be a
-        :class:`~pywbem.CIMProperty` object in this case::
+        dictionary. In that case, the provided input value may be specified as
+        a :term:`CIM data type` or as a :class:`~pywbem.CIMProperty` object::
 
             inst = CIMInstance(...)
-            p2 = CIMProperty('p2', ...)
+            p2 = Uint32(...)  # may be CIM data type or CIMProperty
 
             inst['p2'] = p2  # Set "p2" to p2 (add if needed)
             p2 = inst['p2']  # Access "p2"
@@ -1462,7 +1624,12 @@ class CIMInstance(_CIMComparisonMixin):
     @properties.setter
     def properties(self, properties):
         """Setter method; for a description see the getter method."""
-        self._properties = properties
+        # We make sure that the dictionary is a NocaseDict object, and that the
+        # property values are CIMProperty objects:
+        self._properties = NocaseDict()
+        if properties:
+            for key, value in properties.items():
+                self.__setitem__(key, value)
 
     @property
     def qualifiers(self):
@@ -1492,7 +1659,12 @@ class CIMInstance(_CIMComparisonMixin):
     @qualifiers.setter
     def qualifiers(self, qualifiers):
         """Setter method; for a description see the getter method."""
-        self._qualifiers = qualifiers
+        # We make sure that the dictionary is a NocaseDict object, and that the
+        # property values are CIMQualifier objects:
+        self._qualifiers = NocaseDict()
+        if qualifiers:
+            for key, value in qualifiers.items():
+                self._qualifiers[key] = _cim_qualifier(key, value)
 
     @property
     def path(self):
@@ -1509,7 +1681,8 @@ class CIMInstance(_CIMComparisonMixin):
     @path.setter
     def path(self, path):
         """Setter method; for a description see the getter method."""
-        self._path = path
+        assert isinstance(path, CIMInstanceName) or path is None
+        self._path = copy(path)  # It is modified by the properties setter
 
     @property
     def property_list(self):
@@ -1528,7 +1701,11 @@ class CIMInstance(_CIMComparisonMixin):
     @property_list.setter
     def property_list(self, property_list):
         """Setter method; for a description see the getter method."""
-        self._property_list = property_list
+        if property_list is not None:
+            self._property_list = [_ensure_unicode(x).lower()
+                                   for x in property_list]
+        else:
+            self._property_list = None
 
     def _cmp(self, other):
         """
@@ -1582,31 +1759,19 @@ class CIMInstance(_CIMComparisonMixin):
 
     def __setitem__(self, key, value):
 
-        # Don't let anyone set integer or float values.  You must use
-        # a subclass from the cim_type module.
+        # Ignore properties that are excluded via property list, except
+        # if they are used in the instance path.
+        # TODO: Clarify why we ignore such properties.
+        if self.property_list is not None and \
+                key.lower() not in self.property_list and \
+                self.path is not None and \
+                key not in self.path.keybindings:
+            return
 
-        # Note: The CIM data types are derived from the built-in types,
-        # so we cannot use isinstance() for this test.
-        # pylint: disable=unidiomatic-typecheck
-        if builtin_type(value) in six.integer_types + (float,):
-            raise TypeError(
-                "Type of numeric value for a property must be a "
-                "CIM data type, but is %s" % builtin_type(value))
-
-        if self.property_list is not None and key.lower() not in \
-                self.property_list:
-            if self.path is not None and key not in self.path.keybindings:
-                return
-
-        # Convert value to appropriate pywbem type
-        if isinstance(value, CIMProperty):
-            val = value
-        else:
-            val = CIMProperty(key, value)
-
-        self.properties[key] = val
+        prop = _cim_property_value(key, value)
+        self.properties[key] = prop
         if self.path is not None and key in self.path.keybindings:
-            self.path[key] = val.value
+            self.path[key] = prop.value
 
     def __delitem__(self, key):
         del self.properties[key]
@@ -1853,25 +2018,15 @@ class CIMClassName(_CIMComparisonMixin):
             `None` means that the namespace is unspecified, and the
             same-named attribute in the ``CIMClassName`` object will also be
             `None`.
+
+        Raises:
+
+          ValueError: classname is `None`.
         """
-
-        # Make sure we process Unicode strings
-        classname = _ensure_unicode(classname)
-        host = _ensure_unicode(host)
-        namespace = _ensure_unicode(namespace)
-
-        if not isinstance(classname, six.string_types):
-            raise TypeError(
-                "classname argument has an invalid type: %s "
-                "(expected string)" % builtin_type(classname))
-
-        # TODO: There are some odd restrictions on what a CIM
-        # classname can look like (i.e must start with a
-        # non-underscore and only one underscore per classname).
-
+        # We use the respective setter methods:
         self.classname = classname
-        self.host = host
         self.namespace = namespace
+        self.host = host
 
     @property
     def classname(self):
@@ -1888,7 +2043,10 @@ class CIMClassName(_CIMComparisonMixin):
     @classname.setter
     def classname(self, classname):
         """Setter method; for a description see the getter method."""
-        self._classname = classname
+        if classname is None:
+            raise ValueError("Class name in class path must not be None")
+        # TODO: Implement checks for CIM class name format.
+        self._classname = _ensure_unicode(classname)
 
     @property
     def namespace(self):
@@ -1906,7 +2064,7 @@ class CIMClassName(_CIMComparisonMixin):
     @namespace.setter
     def namespace(self, namespace):
         """Setter method; for a description see the getter method."""
-        self._namespace = namespace
+        self._namespace = _ensure_unicode(namespace)
 
     @property
     def host(self):
@@ -1927,7 +2085,7 @@ class CIMClassName(_CIMComparisonMixin):
     @host.setter
     def host(self, host):
         """Setter method; for a description see the getter method."""
-        self._host = host
+        self._host = _ensure_unicode(host)
 
     def copy(self):
         """
@@ -2114,11 +2272,17 @@ class CIMClass(_CIMComparisonMixin):
 
             * key (:term:`string`):
               Qualifier name. Lexical case is preserved. Must not be `None`.
-            * value (:class:`~pywbem.CIMQualifier`):
+            * value (:term:`CIM data type` or :class:`~pywbem.CIMQualifier`):
               Qualifier value.
-              The `name` attribute of the provided object must be equal (case
-              insensitively) to the dictionary key, and the provided object
-              will be stored in the ``CIMClass`` object (no copy is made).
+
+              If specified as a :term:`CIM data type`, a new
+              :class:`~pywbem.CIMQualifier` object will be created from it,
+              and the new object will be stored in the ``CIMClass`` object.
+
+              If specified as a :class:`~pywbem.CIMQualifier` object, its `name`
+              attribute must be equal (case insensitively) to the dictionary
+              key, and the provided object will be stored in the ``CIMClass``
+              object (no copy is made).
 
             `None` is interpreted as an empty set of qualifiers.
 
@@ -2135,14 +2299,21 @@ class CIMClass(_CIMComparisonMixin):
             This parameter has been added in pywbem v0.11.0 as a convenience
             for the user in order so that ``CIMClass`` objects can be
             self-contained w.r.t. their class path.
-        """
 
-        self.classname = _ensure_unicode(classname)
-        self.properties = NocaseDict(properties)
-        self.methods = NocaseDict(methods)
-        self.superclass = _ensure_unicode(superclass)
-        self.qualifiers = NocaseDict(qualifiers)
+        Raises:
+
+          ValueError: classname is `None`, a property, method or qualifier name
+            is `None`, or a property, method or qualifier name does not match
+            its dictionary key.
+          TypeError: a numeric Python type was used for a qualifier value.
+        """
+        # We use the respective setter methods:
+        self.classname = classname
+        self.superclass = superclass
         self.path = path
+        self.properties = properties
+        self.methods = methods
+        self.qualifiers = qualifiers
 
     @property
     def classname(self):
@@ -2159,7 +2330,9 @@ class CIMClass(_CIMComparisonMixin):
     @classname.setter
     def classname(self, classname):
         """Setter method; for a description see the getter method."""
-        self._classname = classname
+        if classname is None:
+            raise ValueError("Class name in class must not be None")
+        self._classname = _ensure_unicode(classname)
 
     @property
     def superclass(self):
@@ -2176,7 +2349,7 @@ class CIMClass(_CIMComparisonMixin):
     @superclass.setter
     def superclass(self, superclass):
         """Setter method; for a description see the getter method."""
-        self._superclass = superclass
+        self._superclass = _ensure_unicode(superclass)
 
     @property
     def properties(self):
@@ -2196,7 +2369,8 @@ class CIMClass(_CIMComparisonMixin):
         the description of the same-named constructor parameter.
 
         The CIM properties can also be accessed and manipulated one by one
-        because the attribute value is a modifiable dictionary::
+        because the attribute value is a modifiable dictionary. The provided
+        input value must be a :class:`~pywbem.CIMProperty` object::
 
             cls = CIMClass(...)
             p1 = CIMProperty('p1', ...)  # must be a CIMProperty
@@ -2210,7 +2384,12 @@ class CIMClass(_CIMComparisonMixin):
     @properties.setter
     def properties(self, properties):
         """Setter method; for a description see the getter method."""
-        self._properties = properties
+        # We make sure that the dictionary is a NocaseDict object, and that the
+        # property values are CIMProperty objects:
+        self._properties = NocaseDict()
+        if properties:
+            for key, value in properties.items():
+                self.properties[key] = _cim_property_decl(key, value)
 
     @property
     def methods(self):
@@ -2230,7 +2409,8 @@ class CIMClass(_CIMComparisonMixin):
         the description of the same-named constructor parameter.
 
         The CIM methods can also be accessed and manipulated one by one
-        because the attribute value is a modifiable dictionary::
+        because the attribute value is a modifiable dictionary. The provided
+        input value must be a :class:`~pywbem.CIMMethod` object::
 
             cls = CIMClass(...)
             m1 = CIMMethod('m1', ...)  # must be a CIMMethod
@@ -2244,7 +2424,12 @@ class CIMClass(_CIMComparisonMixin):
     @methods.setter
     def methods(self, methods):
         """Setter method; for a description see the getter method."""
-        self._methods = methods
+        # We make sure that the dictionary is a NocaseDict object, and that the
+        # property values are CIMMethod objects:
+        self._methods = NocaseDict()
+        if methods:
+            for key, value in methods.items():
+                self._methods[key] = _cim_method(key, value)
 
     @property
     def qualifiers(self):
@@ -2253,7 +2438,7 @@ class CIMClass(_CIMComparisonMixin):
 
         Each dictionary item specifies one qualifier, with:
 
-        * key (:term:`string`): Qualifier name. Its lexical case was
+        * key (:term:`unicode string`): Qualifier name. Its lexical case was
           preserved.
         * value (:class:`~pywbem.CIMQualifier`): Qualifier value.
 
@@ -2264,10 +2449,12 @@ class CIMClass(_CIMComparisonMixin):
         the description of the same-named constructor parameter.
 
         The qualifier values can also be accessed and manipulated one by one
-        because the attribute value is a modifiable dictionary::
+        because the attribute value is a modifiable dictionary. The provided
+        input value may be specified as a :term:`CIM data type` or as a
+        :class:`~pywbem.CIMQualifier` object::
 
             cls = CIMClass(...)
-            q1 = CIMQualifier('q1', ...)  # must be a CIMQualifier
+            q1 = Uint32(...)  # may be CIM data type or CIMQualifier
 
             cls.qualifiers['q1'] = q1  # Set "q1" to q1 (add if needed)
             q1 = cls.qualifiers['q1']  # Access "q1"
@@ -2278,7 +2465,12 @@ class CIMClass(_CIMComparisonMixin):
     @qualifiers.setter
     def qualifiers(self, qualifiers):
         """Setter method; for a description see the getter method."""
-        self._qualifiers = qualifiers
+        # We make sure that the dictionary is a NocaseDict object, and that the
+        # property values are CIMQualifier objects:
+        self._qualifiers = NocaseDict()
+        if qualifiers:
+            for key, value in qualifiers.items():
+                self._qualifiers[key] = _cim_qualifier(key, value)
 
     @property
     def path(self):
@@ -2303,6 +2495,7 @@ class CIMClass(_CIMComparisonMixin):
     @path.setter
     def path(self, path):
         """Setter method; for a description see the getter method."""
+        assert isinstance(path, CIMClassName) or path is None
         self._path = path
 
     def _cmp(self, other):
@@ -3065,10 +3258,12 @@ class CIMProperty(_CIMComparisonMixin):
         the description of the same-named constructor parameter.
 
         The qualifier values can also be accessed and manipulated one by one
-        because the attribute value is a modifiable dictionary::
+        because the attribute value is a modifiable dictionary. The provided
+        input value may be specified as a :term:`CIM data type` or as a
+        :class:`~pywbem.CIMQualifier` object::
 
             prop = CIMProperty(...)
-            q1 = CIMQualifier('q1', ...)  # must be a CIMQualifier
+            q1 = CIMQualifier('q1', ...) # may be CIM data type or CIMQualifier
 
             prop.qualifiers['q1'] = q1  # Set "q1" to q1 (add if needed)
             q1 = prop.qualifiers['q1']  # Access "q1"
@@ -3545,7 +3740,8 @@ class CIMMethod(_CIMComparisonMixin):
         the description of the same-named constructor parameter.
 
         The parameters can also be accessed and manipulated one by one
-        because the attribute value is a modifiable dictionary::
+        because the attribute value is a modifiable dictionary. The provided
+        input value must be a :class:`~pywbem.CIMParameter` object::
 
             meth = CIMMethod(...)
             p1 = CIMParameter('p1', ...)  # must be a CIMParameter
@@ -3579,10 +3775,12 @@ class CIMMethod(_CIMComparisonMixin):
         the description of the same-named constructor parameter.
 
         The qualifier values can also be accessed and manipulated one by one
-        because the attribute value is a modifiable dictionary::
+        because the attribute value is a modifiable dictionary. The provided
+        input value may be specified as a :term:`CIM data type` or as a
+        :class:`~pywbem.CIMQualifier` object::
 
             meth = CIMMethod(...)
-            q1 = CIMQualifier('q1', ...)  # must be a CIMQualifier
+            q1 = "..."  # may be CIM data type or CIMQualifier
 
             meth.qualifiers['q1'] = q1  # Set "q1" to q1 (add if needed)
             q1 = meth.qualifiers['q1']  # Access "q1"
@@ -3796,7 +3994,7 @@ class CIMParameter(_CIMComparisonMixin):
           value:
             Deprecated: Because the object represents a parameter declaration,
             this parameter does not make any sense. Specifying a value other
-            than `None` will issue a :term:`DeprecationWarning`.
+            than `None` will cause a :term:`DeprecationWarning` to be issued.
         """
 
         type_ = type  # Minimize usage of the builtin 'type'
@@ -3924,10 +4122,12 @@ class CIMParameter(_CIMComparisonMixin):
         the description of the same-named constructor parameter.
 
         The qualifier values can also be accessed and manipulated one by one
-        because the attribute value is a modifiable dictionary::
+        because the attribute value is a modifiable dictionary. The provided
+        input value may be specified as a :term:`CIM data type` or as a
+        :class:`~pywbem.CIMQualifier` object::
 
             parm = CIMParameter(...)
-            q1 = CIMQualifier('q1', ...)  # must be a CIMQualifier
+            q1 = True  # may be CIM data type or CIMQualifier
 
             parm.qualifiers['q1'] = q1  # Set "q1" to q1 (add if needed)
             q1 = parm.qualifiers['q1']  # Access "q1"
@@ -3944,8 +4144,8 @@ class CIMParameter(_CIMComparisonMixin):
     def value(self):
         """
         Deprecated: Because the object represents a parameter declaration,
-        this attribute does not make any sense. Accessing it will issue
-        a :term:`DeprecationWarning`.
+        this attribute does not make any sense. Accessing it will cause a
+        :term:`DeprecationWarning` to be issued.
         """
         warnings.warn(
             "The value attribute of CIMParameter is deprecated",

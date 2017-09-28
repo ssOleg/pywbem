@@ -2440,7 +2440,7 @@ class CopyCIMClass(unittest.TestCase):
 
         c = CIMClass('CIM_Foo',
                      methods={'Delete': CIMMethod('Delete', 'uint32')},
-                     qualifiers={'Key': CIMQualifier('Value', True)},
+                     qualifiers={'Key': CIMQualifier('Key', True)},
                      path=path)
 
         co = c.copy()

@@ -23,8 +23,35 @@ Released: Not yet
 Incompatible changes
 ^^^^^^^^^^^^^^^^^^^^
 
+* For CIM element names specified as input to CIM objects (class, property,
+  method, parameter, qualifier names), the requirement not to be `None`
+  is now enforced by raising `ValueError`. Users that relied on violating the
+  documented requirement may experience an incompatibility.
+
+* For CIM elements passed as dictionaries (properties, keybindings,
+  parameters, qualifiers), the consistency between the dict key and the
+  name of the CIM element is now checked and `ValueError` is raised if
+  it does not match (case insensitively). Users that relied on the previous
+  tolerance for inconsistent names may experience an incompatibility.
+
+Deprecations
+^^^^^^^^^^^^
+
+* For `CIMInstanceName`, specifying input keybindings as Python numeric types
+  (`int`, `float`) has been deprecated, and an according deprecation warning
+  will now be raised.
+
 Enhancements
 ^^^^^^^^^^^^
+
+* For `CIMInstanceName`, the values of keybindings can now be specified as
+  `CIMProperty` objects from which their value will be used (this is in
+  addition to specfying the values of keybindings as CIM data types).
+
+* Updating attributes of CIM objects (e.g. updating `CIMInstance.properties`)
+  now goes through the same conversions (e.g. binary string to unicode string)
+  as for the same-named constructor parameters. The previously documented
+  types still work.
 
 * Changed public attributes to properties with getter and setter in all CIM
   object classes (e.g. `CIMInstance`). This solves the Sphinx warnigs about
